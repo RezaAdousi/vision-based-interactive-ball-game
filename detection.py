@@ -87,6 +87,7 @@ from config import (
     OBSTACLE_COARSE_CHROMA_MAX,
     OBSTACLE_EDGE_LEVEL,
     MIN_OBSTACLE_BRIGHTNESS,
+    MIN_OBSTACLE_CONTRAST,
     MAX_OBSTACLE_CHROMA,
     MIN_OBSTACLE_RECTANGULARITY,
     MIN_OBSTACLE_SOLIDITY,
@@ -110,6 +111,7 @@ from config import (
     OBSTACLE_MASK_CLOSE_KERNEL,
     SHOW_DETECTED_OBSTACLES,
     DETECTED_OBSTACLE_PAINT_INSET_RATIO,
+    BACKGROUND_COLOR,
 )
 
 
@@ -297,28 +299,42 @@ class Detector:
             255,
         ).astype(np.uint8)
 
-        # "Locally brighter than its own neighborhood" (not "above
-        # one fixed brightness for the whole frame") - see the
-        # module docstring and config.py's OBSTACLE_ADAPTIVE_* for
-        # why. A plain floor is still kept underneath it purely as a
-        # noise guard: without it, sensor noise inside a totally
-        # dark, sticker-free patch of screen can register as
-        # "locally brighter than its (equally dark) surroundings"
-        # even though nothing is actually there.
-        local = cv2.adaptiveThreshold(
+        # Candidate regions: locally brighter OR locally darker than
+        # immediate surroundings (supports both light stickers on dark/colored
+        # background and dark stickers on bright/colored background).
+        block_size = self._adaptive_block_size()
+
+        local_light = cv2.adaptiveThreshold(
             lightness,
             255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY,
-            self._adaptive_block_size(),
+            block_size,
             -OBSTACLE_ADAPTIVE_OFFSET,
         )
 
-        mask = local & cv2.inRange(
+        local_dark = cv2.adaptiveThreshold(
+            lightness,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            block_size,
+            OBSTACLE_ADAPTIVE_OFFSET,
+        )
+
+        light_mask = local_light & cv2.inRange(
             lightness,
             OBSTACLE_MIN_ABSOLUTE_LIGHTNESS,
             255,
         )
+
+        dark_mask = local_dark & cv2.inRange(
+            lightness,
+            0,
+            255 - OBSTACLE_MIN_ABSOLUTE_LIGHTNESS,
+        )
+
+        mask = light_mask | dark_mask
 
         mask &= cv2.inRange(
             chroma,
@@ -495,18 +511,38 @@ class Detector:
         if inside.size == 0 or outside.size < 8:
             return None
 
-        plateau = float(np.percentile(inside, 75))
-        background = float(np.percentile(outside, 10))
+        mean_in = float(np.mean(inside))
+        mean_out = float(np.mean(outside))
 
-        # 2. Half-way brightness between this blob's own paper level
-        # and the dark screen beside it.
-        level = max(
-            background
-            + OBSTACLE_EDGE_LEVEL * (plateau - background),
-            float(OBSTACLE_MIN_ABSOLUTE_LIGHTNESS),
-        )
+        is_light = mean_in >= mean_out
 
-        refined = cv2.inRange(crop_light, level, 255)
+        if is_light:
+            plateau = float(np.percentile(inside, 75))
+            background = float(np.percentile(outside, 10))
+            contrast_val = plateau - background
+
+            if contrast_val < 10:
+                return None
+
+            level = max(
+                background + OBSTACLE_EDGE_LEVEL * contrast_val,
+                float(OBSTACLE_MIN_ABSOLUTE_LIGHTNESS),
+            )
+            refined = cv2.inRange(crop_light, int(round(level)), 255)
+        else:
+            plateau = float(np.percentile(inside, 25))
+            background = float(np.percentile(outside, 90))
+            contrast_val = background - plateau
+
+            if contrast_val < 10:
+                return None
+
+            level = min(
+                background - OBSTACLE_EDGE_LEVEL * contrast_val,
+                float(255 - OBSTACLE_MIN_ABSOLUTE_LIGHTNESS),
+            )
+            refined = cv2.inRange(crop_light, 0, int(round(level)))
+
         refined &= cv2.inRange(
             crop_chroma, 0, OBSTACLE_COARSE_CHROMA_MAX
         )
@@ -602,7 +638,7 @@ class Detector:
 
         light_std = float(std[0][0])
 
-        # Ring just outside the blob must be dark (black screen).
+        # Ring just outside the blob must contrast with the candidate.
         ring_kernel = np.ones(
             (2 * ring + 1, 2 * ring + 1), np.uint8
         )
@@ -617,11 +653,21 @@ class Detector:
         ring_count = int(np.count_nonzero(ring_mask))
 
         if ring_count >= 12:
-            dark = crop_light[ring_mask > 0] < (mean_light * 0.5)
+            ring_pixels = crop_light[ring_mask > 0]
+            bg_ring_mean = float(np.mean(ring_pixels))
+            contrast_mag = abs(mean_light - bg_ring_mean)
 
-            dark_ratio = float(np.count_nonzero(dark)) / ring_count
+            if is_light:
+                cutoff = mean_light - 0.4 * (mean_light - bg_ring_mean)
+                contrasting = ring_pixels < cutoff
+            else:
+                cutoff = mean_light + 0.4 * (bg_ring_mean - mean_light)
+                contrasting = ring_pixels > cutoff
+
+            dark_ratio = float(np.count_nonzero(contrasting)) / ring_count
         else:
             dark_ratio = 1.0
+            contrast_mag = abs(mean_in - mean_out)
 
         # Touching the edge of the search area means the sticker is
         # (or may be) cut off - its true size is unknown.
@@ -654,6 +700,8 @@ class Detector:
             "std": light_std,
             "dark_ratio": dark_ratio,
             "clipped": clipped,
+            "is_light": is_light,
+            "contrast": contrast_mag,
         }
 
         candidate["strict_ok"], candidate["snap"] = self._passes(
@@ -686,8 +734,17 @@ class Detector:
         if c["aspect"] > MAX_OBSTACLE_ASPECT_RATIO / factor:
             return False, False
 
-        if c["brightness"] < MIN_OBSTACLE_BRIGHTNESS * factor:
-            return False, False
+        # Polarity-adaptive brightness and contrast checks:
+        # A candidate must have sufficient visual contrast relative to surroundings.
+        if c["is_light"]:
+            if (
+                c["brightness"] < MIN_OBSTACLE_BRIGHTNESS * factor
+                and c["contrast"] < MIN_OBSTACLE_CONTRAST * factor
+            ):
+                return False, False
+        else:
+            if c["contrast"] < MIN_OBSTACLE_CONTRAST * factor:
+                return False, False
 
         if c["chroma"] > MAX_OBSTACLE_CHROMA / factor:
             return False, False

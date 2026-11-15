@@ -4,8 +4,8 @@
 # Screen
 # ============================================================
 
-SCREEN_WIDTH = 1530
-SCREEN_HEIGHT = 920
+SCREEN_WIDTH = 1600
+SCREEN_HEIGHT = 900
 
 
 # ============================================================
@@ -13,8 +13,8 @@ SCREEN_HEIGHT = 920
 # ============================================================
 
 # CAMERA_URL = "http://172.30.2.62:8080/video"
-# CAMERA_URL = "http://172.30.1.216:4747/video"
-CAMERA_URL = "http://192.168.1.194:4747/video"
+CAMERA_URL = "http://172.30.1.216:4747/video"
+# CAMERA_URL = "http://192.168.1.194:4747/video"
 
 # How long to wait between attempts to (re)connect to the camera
 # when it is unreachable - both on startup (phone app not open yet)
@@ -240,7 +240,7 @@ CAMERA_FROZEN_SECONDS = 2.0
 # Rendering
 # ============================================================
 
-BACKGROUND_COLOR = (0, 0, 0)
+BACKGROUND_COLOR = (255, 0, 0)
 
 TARGET_FPS = 144
 
@@ -511,6 +511,7 @@ OBSTACLE_EDGE_LEVEL = 0.5
 # --- Deciding whether a blob really is a sticker --------------
 # Average lightness/chroma INSIDE the blob (CIELAB - see above).
 MIN_OBSTACLE_BRIGHTNESS = 130
+MIN_OBSTACLE_CONTRAST = 40
 MAX_OBSTACLE_CHROMA = 28
 
 # Fraction of the blob's own best-fit rotated rectangle it fills.
@@ -529,8 +530,8 @@ MAX_OBSTACLE_ASPECT_RATIO = 4.0
 # vary a lot in brightness across their surface.
 MAX_OBSTACLE_BRIGHTNESS_STD = 30.0
 
-# A real sticker sits on a black screen: this fraction of the ring
-# of pixels just outside it must be clearly darker than the sticker.
+# A real sticker sits on a screen background: this fraction of the ring
+# of pixels just outside it must clearly contrast with the sticker.
 MIN_OBSTACLE_DARK_SURROUND_RATIO = 0.55
 
 # Only look for stickers inside the calibration border, and never
