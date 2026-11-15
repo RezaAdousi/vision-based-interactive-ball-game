@@ -42,8 +42,6 @@ A remote smartphone camera placed several meters away observes the monitor at an
 
 ## Demonstrations & Media
 
-> **Note:** The following media showcase the deployment, hardware setup, and gameplay. Replace the placeholders below with the corresponding recorded media files.
-
 ### 1. Main Demo Video (Exhibition Event)
 *Footage of placing physical markers on the large exhibition monitor during the live university event, demonstrating virtual balls colliding and bouncing elastically off the physical stickers.*
 
